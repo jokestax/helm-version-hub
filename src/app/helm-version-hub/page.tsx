@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { url } from 'inspector';
 
 interface WorkloadCluster {
   cluster_name: string;
@@ -54,7 +55,6 @@ interface VersionResponse {
 const Sidebar = ({ onOpenHub }: { onOpenHub: () => void }) => {
   return (
     <div className="h-screen w-64 bg-gray-900 text-white p-4 flex flex-col">
-      <h1 className="text-2xl font-bold mb-6">Argo Upgrader</h1>
       <button
         className="p-2 bg-blue-600 rounded-lg hover:bg-blue-700"
         onClick={onOpenHub}
@@ -67,7 +67,8 @@ const Sidebar = ({ onOpenHub }: { onOpenHub: () => void }) => {
 
 const Home = () => {
   const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [selectedCluster, setSelectedCluster] = useState<string>('');
+  const [selectedCluster, setSelectedCluster] = useState<string>(''); 
+  const [selectedType, setSelectedType] = useState<string>('');
   const [applications, setApplications] = useState<Application[] | null>(null);
   const [showDropdown, setShowDropdown] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,8 +109,10 @@ const Home = () => {
   // Fetch Applications
   useEffect(() => {
     if (selectedCluster) {
+      var url: string;
       setApplications(null); // Clear existing applications
-      axios.get<ApiResponse>(`http://localhost:8082/api/v1/applications?cluster_name=${selectedCluster}&include_all=true`)
+      url = `http://localhost:8082/api/v1/applications?cluster_name=${selectedCluster}&include_all=true&type=${selectedType}`;
+      axios.get<ApiResponse>(url)
         .then(response => {
           setApplications(response.data.applications);
         })
@@ -123,7 +126,12 @@ const Home = () => {
 
   // Handle selecting cluster
   const handleClusterSelect = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const clusterName = event.target.value;
+    const selectElement = event.target;
+    const clusterName = selectElement.value;
+    const selectedOption = selectElement.selectedOptions[0];
+    const clusterType = selectedOption.getAttribute('data-type') || "nil";
+  
+    setSelectedType(clusterType);
     setSelectedCluster(clusterName);
     setError(null);
     setApplications(null);
@@ -132,36 +140,38 @@ const Home = () => {
     setSelectedApp(null);
   };
 
-  // Handle clicking card
   const handleCardClick = useCallback((appName: string) => {
     setSelectedApp(prev => (prev === appName ? null : appName));
-
-    setLatestVersions(prevVersions => {
-      if (prevVersions[appName]) {
-        return prevVersions; // Already loaded
-      }
-
-      if (loadingVersions[appName]) {
-        return prevVersions; // Already loading
-      }
-
-      setLoadingVersions(prevLoading => ({ ...prevLoading, [appName]: true }));
-
-      axios.get<VersionResponse>(`http://localhost:8082/api/v1/application/${appName}/version`)
-        .then(response => {
-          setLatestVersions(prev => ({ ...prev, [appName]: response.data.versions }));
-        })
-        .catch(error => {
-          console.error("Error fetching versions:", error);
-          setError(`Failed to fetch versions for ${appName}.`);
-        })
-        .finally(() => {
-          setLoadingVersions(prevLoading => ({ ...prevLoading, [appName]: false }));
-        });
-
-        return prevVersions;  // Return the previous state immediately
-    });
-  }, []);
+  
+    // If versions are already loaded or loading, do nothing
+    if (latestVersions[appName] || loadingVersions[appName]) {
+      return;
+    }
+  
+    // Set loading state for the app
+    setLoadingVersions(prevLoading => ({ ...prevLoading, [appName]: true }));
+  
+    // Fetch versions from the API
+    axios.get<string[]>(`http://localhost:8082/api/v1/application/${appName}/version`)
+      .then(response => {
+        // Update the latest versions state with the new data
+        setLatestVersions(prev => ({
+          ...prev,
+          [appName]: response.data,
+        }));
+      })
+      .catch(error => {
+        console.error("Error fetching versions:", error);
+        setError(`Failed to fetch versions for ${appName}.`);
+      })
+      .finally(() => {
+        // Reset loading state for the app
+        setLoadingVersions(prevLoading => ({
+          ...prevLoading,
+          [appName]: false,
+        }));
+      });
+  }, [latestVersions, loadingVersions]);
 
   // Get card style
   const getCardStyle = (appName: string): React.CSSProperties => {
@@ -181,23 +191,21 @@ const Home = () => {
     <div className="flex h-screen">
       <Sidebar onOpenHub={() => setShowDropdown(true)} />
       <div className="flex-1 p-6">
-        <h2 className="text-xl font-semibold">Helm Version Hub</h2>
-        {showDropdown && (
-          <div className="mt-4">
-            <select
-              className="p-2 border rounded-lg"
-              onChange={handleClusterSelect}
-              value={selectedCluster}
-            >
-              <option value="">Select a Cluster</option>
-              {clusters.map((cluster) => (
-                <option key={cluster.id} value={cluster.name}>
-                  {cluster.name} ({cluster.type})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <h2 className="text-xl font-semibold">Select Cluster</h2>
+        <div className="mt-4">
+          <select
+            className="p-2 border rounded-lg"
+            onChange={handleClusterSelect}
+            value={selectedCluster}
+          >
+            <option value="">Select a Cluster</option>
+            {clusters.map((cluster) => (
+              <option key={cluster.id} value={cluster.name} data-type={cluster.type}>
+                {cluster.name} ({cluster.type})
+              </option>
+            ))}
+          </select>
+        </div>
         {error && <div className="text-red-500 mt-2">{error}</div>}
         <div className="grid grid-cols-3 gap-4 mt-6">
           {applications === null ? (
@@ -215,7 +223,7 @@ const Home = () => {
                 {loadingVersions[app.name] && <p>Loading versions...</p>}
                 {selectedApp === app.name && latestVersions[app.name] && (
                   <div>
-                    <h4>Latest Versions:</h4>
+                    <h4>Versions Available:</h4>
                     <ul>
                       {latestVersions[app.name].map((version, index) => (
                         <li key={index}>{version}</li>
